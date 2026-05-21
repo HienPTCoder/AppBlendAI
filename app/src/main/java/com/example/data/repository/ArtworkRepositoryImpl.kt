@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import android.content.Context
+import android.net.Uri
 import android.util.Base64
 import com.example.data.local.ArtworkDao
 import com.example.data.local.ArtworkEntity
@@ -8,11 +9,15 @@ import com.example.data.remote.GeminiApiService
 import com.example.data.remote.dto.Content
 import com.example.data.remote.dto.GenerateContentRequest
 import com.example.data.remote.dto.GenerationConfig
-import com.example.data.remote.dto.ImageConfig
+import com.example.data.remote.dto.ImagenGenerateRequest
+import com.example.data.remote.dto.ImagenInstance
+import com.example.data.remote.dto.ImagenParameters
+import com.example.data.remote.dto.InlineData
 import com.example.data.remote.dto.Part
 import com.example.domain.model.AspectRatio
 import com.example.domain.model.GeneratedArtwork
 import com.example.domain.model.ImageQuality
+import com.example.domain.model.ImageReferenceMode
 import com.example.domain.model.ImageStyle
 import com.example.domain.repository.ArtworkRepository
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +30,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
 
 class ArtworkRepositoryImpl(
     private val context: Context,
@@ -76,7 +82,9 @@ class ArtworkRepositoryImpl(
         style: ImageStyle,
         aspectRatio: AspectRatio,
         quality: ImageQuality,
-        overrideApiKey: String?
+        overrideApiKey: String?,
+        referenceImageUri: Uri?,
+        referenceMode: ImageReferenceMode
     ): GeneratedArtwork = withContext(Dispatchers.IO) {
         val apiKey = if (!overrideApiKey.isNullOrBlank()) overrideApiKey else defaultApiKey
         
@@ -109,7 +117,7 @@ class ArtworkRepositoryImpl(
                 )
 
                 val translationResponse = apiService.generateContent(
-                    model = "gemini-3.5-flash",
+                    model = "gemini-2.0-flash",
                     apiKey = apiKey,
                     request = translationRequest
                 )
@@ -125,16 +133,66 @@ class ArtworkRepositoryImpl(
         }
 
         // 2. Construct final AI text prompt enhancing user input with selected style attributes
-        val enhancedPrompt = if (negativePrompt.isNullOrBlank()) {
-            "$parsedPrompt. Style: ${style.promptEnhancement}"
-        } else {
-            "$parsedPrompt. Style: ${style.promptEnhancement}. Negative prompt - do NOT generate: $negativePrompt"
-        }
+        // Negative prompt is passed separately to Imagen 3, not embedded here
+        val enhancedPrompt = "$parsedPrompt. Style: ${style.promptEnhancement}"
 
         var savedFilePath: String? = null
         var isRealGemini = false
 
-        // Only try real Gemini API if we have a valid-looking API key (not empty or default placeholder)
+        // Read reference image bytes (if provided) before the API call
+        var refImageBase64: String? = null
+        var refMimeType: String = "image/jpeg"
+        if (referenceImageUri != null) {
+            try {
+                refMimeType = context.contentResolver.getType(referenceImageUri) ?: "image/jpeg"
+                val bytes = context.contentResolver.openInputStream(referenceImageUri)?.use { it.readBytes() }
+                if (bytes != null) {
+                    refImageBase64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        // Build style context from reference image (uses Gemini Flash vision — always available)
+        var styleContext: String? = null
+        if (refImageBase64 != null && apiKey.isNotBlank() && apiKey != "MY_GEMINI_API_KEY") {
+            try {
+                val analysisText = when (referenceMode) {
+                    ImageReferenceMode.INSPIRE ->
+                        "Describe the visual style, color palette, mood, lighting, and artistic technique of this image in 2 sentences. Focus only on style elements, not the content subject."
+                    ImageReferenceMode.EDIT ->
+                        "Describe the main subject, composition, layout, and key visual elements of this image in 2 sentences."
+                }
+                val capturedRef = refImageBase64
+                val analysisRequest = GenerateContentRequest(
+                    contents = listOf(Content(parts = listOf(
+                        Part(text = analysisText),
+                        Part(inlineData = InlineData(mimeType = refMimeType, data = capturedRef))
+                    ))),
+                    generationConfig = GenerationConfig(temperature = 0.2f)
+                )
+                val analysisResponse = apiService.generateContent(
+                    model = "gemini-2.0-flash",
+                    apiKey = apiKey,
+                    request = analysisRequest
+                )
+                styleContext = analysisResponse.candidates
+                    ?.firstOrNull()?.content?.parts?.firstOrNull()?.text?.trim()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        val finalPrompt = when {
+            styleContext != null && referenceMode == ImageReferenceMode.EDIT ->
+                "Reinterpret this scene: $styleContext. Apply these changes: $enhancedPrompt"
+            styleContext != null ->
+                "$enhancedPrompt. Inspired by this visual style: $styleContext"
+            else -> enhancedPrompt
+        }
+
+        // Step 1: Try Imagen 3 (requires billing on Google Cloud)
         if (apiKey.isNotBlank() && apiKey != "MY_GEMINI_API_KEY") {
             try {
                 val ratioParam = when (aspectRatio) {
@@ -143,41 +201,42 @@ class ArtworkRepositoryImpl(
                     AspectRatio.RATIO_16_9 -> "16:9"
                     AspectRatio.RATIO_4_3 -> "4:3"
                 }
-                
-                val request = GenerateContentRequest(
-                    contents = listOf(
-                        Content(parts = listOf(Part(text = enhancedPrompt)))
-                    ),
-                    generationConfig = GenerationConfig(
-                        imageConfig = ImageConfig(
-                            aspectRatio = ratioParam,
-                            imageSize = if (quality == ImageQuality.HD) "2K" else "1K"
-                        ),
-                        responseModalities = listOf("TEXT", "IMAGE")
+                val imagenRequest = ImagenGenerateRequest(
+                    instances = listOf(ImagenInstance(prompt = finalPrompt)),
+                    parameters = ImagenParameters(
+                        sampleCount = 1,
+                        aspectRatio = ratioParam,
+                        negativePrompt = if (negativePrompt.isNullOrBlank()) null else negativePrompt
                     )
                 )
-
-                // Call gemini-2.5-flash-image for image generation task
-                val response = apiService.generateContent(
-                    model = "gemini-2.5-flash-image",
+                val imagenResponse = apiService.predict(
+                    model = "imagen-3.0-generate-001",
                     apiKey = apiKey,
-                    request = request
+                    request = imagenRequest
                 )
-
-                val imagePart = response.candidates?.firstOrNull()?.content?.parts?.find { it.inlineData != null }
-                val base64Data = imagePart?.inlineData?.data
+                val base64Data = imagenResponse.predictions?.firstOrNull()?.bytesBase64Encoded
                 if (!base64Data.isNullOrBlank()) {
                     val bytes = Base64.decode(base64Data, Base64.DEFAULT)
                     savedFilePath = saveBytesToFilesDir(bytes)
                     isRealGemini = true
                 }
             } catch (e: Exception) {
-                // Fail-safe logging, proceed to stunning local fallback synthesis below
+                // 403 = no billing / no permission for Imagen 3 → fall through to Pollinations
                 e.printStackTrace()
             }
         }
 
-        // 3. High-quality contextual fallback synthesis
+        // Step 2: Pollinations AI — free, no key needed, uses Flux model, matches prompt well
+        if (savedFilePath == null) {
+            try {
+                val pollinationsBytes = fetchPollinationsImage(finalPrompt, aspectRatio)
+                savedFilePath = saveBytesToFilesDir(pollinationsBytes)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        // Step 3: Last resort contextual stock photo fallback
         if (savedFilePath == null) {
             val fallbackBytes = fetchContextualFallbackImage(parsedPrompt, style, aspectRatio)
             savedFilePath = saveBytesToFilesDir(fallbackBytes)
@@ -190,13 +249,45 @@ class ArtworkRepositoryImpl(
             aspectRatio = aspectRatio,
             quality = quality,
             timestamp = System.currentTimeMillis(),
-            imageUri = savedFilePath,
+            imageUri = savedFilePath!!,
             isFavorite = false,
             isDownloaded = isRealGemini // Real ones are auto-marked downloaded, fallback can be saved
         )
 
         val id = artworkDao.insertArtwork(ArtworkEntity.fromDomain(artwork))
         artwork.copy(id = id)
+    }
+
+    private fun fetchPollinationsImage(prompt: String, aspectRatio: AspectRatio): ByteArray {
+        val (width, height) = when (aspectRatio) {
+            AspectRatio.RATIO_1_1 -> Pair(1024, 1024)
+            AspectRatio.RATIO_9_16 -> Pair(768, 1344)
+            AspectRatio.RATIO_16_9 -> Pair(1344, 768)
+            AspectRatio.RATIO_4_3 -> Pair(1152, 864)
+        }
+        val seed = (System.currentTimeMillis() % 99999).toInt()
+        val encodedPrompt = URLEncoder.encode(prompt, "UTF-8")
+        val url = "https://image.pollinations.ai/prompt/$encodedPrompt" +
+                  "?width=$width&height=$height&model=flux&nologo=true&seed=$seed"
+
+        val client = OkHttpClient.Builder()
+            .connectTimeout(90, TimeUnit.SECONDS)
+            .readTimeout(90, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .build()
+
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("User-Agent", "Mozilla/5.0 (Android; Mobile)")
+            .build()
+
+        return client.newCall(request).execute().use { response ->
+            if (response.isSuccessful) {
+                response.body?.bytes() ?: throw IOException("Empty response from Pollinations AI")
+            } else {
+                throw IOException("Pollinations AI error: ${response.code}")
+            }
+        }
     }
 
     private fun saveBytesToFilesDir(bytes: ByteArray): String {

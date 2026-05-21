@@ -1,5 +1,8 @@
 package com.example.presentation.generate
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -24,6 +27,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
@@ -45,13 +49,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.domain.model.AspectRatio
 import com.example.domain.model.ImageQuality
+import com.example.domain.model.ImageReferenceMode
 import com.example.domain.model.ImageStyle
 import com.example.presentation.components.GlassCard
 import com.example.presentation.components.GlowButton
@@ -79,6 +86,12 @@ fun GenerateScreen(
     val selectedAspectRatio by viewModel.selectedAspectRatio.collectAsState()
     val selectedQuality by viewModel.selectedQuality.collectAsState()
     val generationState by viewModel.generationState.collectAsState()
+    val referenceImageUri by viewModel.referenceImageUri.collectAsState()
+    val referenceMode by viewModel.referenceMode.collectAsState()
+
+    val imagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? -> viewModel.setReferenceImage(uri) }
 
     val scrollState = rememberScrollState()
 
@@ -184,7 +197,109 @@ fun GenerateScreen(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Section 2: Negative Prompt (Optional)
+            // Section 2: Reference Image (Optional)
+            Text(
+                text = "Reference Image (Optional)",
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = PolarWhite.copy(alpha = 0.8f)
+                )
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            if (referenceImageUri == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(72.dp)
+                        .background(SpaceSlateDark.copy(alpha = 0.3f), RoundedCornerShape(16.dp))
+                        .border(1.dp, PolarWhite.copy(alpha = 0.10f), RoundedCornerShape(16.dp))
+                        .clickable { imagePicker.launch("image/*") },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.AddPhotoAlternate,
+                            contentDescription = null,
+                            tint = PrimaryElectricViolet,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "Upload from gallery",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                color = PolarWhite.copy(alpha = 0.5f)
+                            )
+                        )
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(SpaceSlateDark.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
+                        .border(1.dp, PrimaryElectricViolet.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AsyncImage(
+                        model = referenceImageUri,
+                        contentDescription = "Reference image",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(68.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Reference image added",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                color = PolarWhite,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        )
+                        Text(
+                            text = "AI will use this as visual reference",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = PolarWhite.copy(alpha = 0.45f),
+                                fontSize = 11.sp
+                            )
+                        )
+                    }
+                    IconButton(onClick = { viewModel.setReferenceImage(null) }) {
+                        Icon(
+                            imageVector = Icons.Default.Clear,
+                            contentDescription = "Remove image",
+                            tint = PolarWhite.copy(alpha = 0.5f)
+                        )
+                    }
+                }
+            }
+
+            // Mode toggle — only visible when a reference image is selected
+            if (referenceImageUri != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(CustomGlassSurface, RoundedCornerShape(14.dp))
+                        .padding(4.dp)
+                ) {
+                    ImageReferenceMode.entries.forEach { mode ->
+                        ReferenceModeTab(
+                            mode = mode,
+                            isSelected = referenceMode == mode,
+                            onClick = { viewModel.setReferenceMode(mode) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // Section 3: Negative Prompt (Optional)
             Text(
                 text = "Negative Prompt (What to Avoid)",
                 style = MaterialTheme.typography.titleLarge.copy(
@@ -220,7 +335,7 @@ fun GenerateScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Section 3: Select Styling
+            // Section 4: Select Styling
             Text(
                 text = "Choose Graphic Style",
                 style = MaterialTheme.typography.titleLarge.copy(
@@ -542,6 +657,46 @@ fun QualityTab(
                 color = if (isSelected) PolarWhite else PolarWhite.copy(alpha = 0.5f),
                 fontSize = 13.sp
             )
+        )
+    }
+}
+
+@Composable
+fun ReferenceModeTab(
+    mode: ImageReferenceMode,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val bgColor = when {
+        isSelected && mode == ImageReferenceMode.EDIT -> VividMagenta
+        isSelected -> SecondaryCyberCyan
+        else -> Color.Transparent
+    }
+    Column(
+        modifier = modifier
+            .background(bgColor, shape = RoundedCornerShape(11.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(text = mode.emoji, fontSize = 16.sp)
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = mode.displayName,
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontWeight = FontWeight.Bold,
+                color = if (isSelected) DeepSpaceBlack else PolarWhite.copy(alpha = 0.5f),
+                fontSize = 12.sp
+            )
+        )
+        Text(
+            text = mode.description,
+            style = MaterialTheme.typography.labelSmall.copy(
+                color = if (isSelected) DeepSpaceBlack.copy(alpha = 0.7f) else PolarWhite.copy(alpha = 0.3f),
+                fontSize = 10.sp
+            ),
+            textAlign = TextAlign.Center
         )
     }
 }

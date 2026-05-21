@@ -55,3 +55,34 @@ data class GenerateContentResponse(
 data class Candidate(
     @Json(name = "content") val content: Content?
 )
+
+// --- Imagen 3 DTOs ---
+
+@JsonClass(generateAdapter = true)
+data class ImagenGenerateRequest(
+    @Json(name = "instances") val instances: List<ImagenInstance>,
+    @Json(name = "parameters") val parameters: ImagenParameters? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class ImagenInstance(
+    @Json(name = "prompt") val prompt: String
+)
+
+@JsonClass(generateAdapter = true)
+data class ImagenParameters(
+    @Json(name = "sampleCount") val sampleCount: Int = 1,
+    @Json(name = "aspectRatio") val aspectRatio: String? = null,
+    @Json(name = "negativePrompt") val negativePrompt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class ImagenGenerateResponse(
+    @Json(name = "predictions") val predictions: List<ImagenPrediction>?
+)
+
+@JsonClass(generateAdapter = true)
+data class ImagenPrediction(
+    @Json(name = "bytesBase64Encoded") val bytesBase64Encoded: String? = null,
+    @Json(name = "mimeType") val mimeType: String? = null
+)

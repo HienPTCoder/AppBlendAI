@@ -1,10 +1,12 @@
 package com.example.presentation.generate
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.domain.model.AspectRatio
 import com.example.domain.model.GeneratedArtwork
 import com.example.domain.model.ImageQuality
+import com.example.domain.model.ImageReferenceMode
 import com.example.domain.model.ImageStyle
 import com.example.domain.repository.ArtworkRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,6 +43,12 @@ class GenerateViewModel(
     private val _generationState = MutableStateFlow<GenerationState>(GenerationState.Idle)
     val generationState: StateFlow<GenerationState> = _generationState.asStateFlow()
 
+    private val _referenceImageUri = MutableStateFlow<Uri?>(null)
+    val referenceImageUri: StateFlow<Uri?> = _referenceImageUri.asStateFlow()
+
+    private val _referenceMode = MutableStateFlow(ImageReferenceMode.INSPIRE)
+    val referenceMode: StateFlow<ImageReferenceMode> = _referenceMode.asStateFlow()
+
     fun updatePrompt(value: String) {
         _prompt.value = value
     }
@@ -59,6 +67,15 @@ class GenerateViewModel(
 
     fun selectQuality(quality: ImageQuality) {
         _selectedQuality.value = quality
+    }
+
+    fun setReferenceImage(uri: Uri?) {
+        _referenceImageUri.value = uri
+        if (uri == null) _referenceMode.value = ImageReferenceMode.INSPIRE
+    }
+
+    fun setReferenceMode(mode: ImageReferenceMode) {
+        _referenceMode.value = mode
     }
 
     fun setGenerationState(state: GenerationState) {
@@ -92,7 +109,9 @@ class GenerateViewModel(
                     style = _selectedStyle.value,
                     aspectRatio = _selectedAspectRatio.value,
                     quality = _selectedQuality.value,
-                    overrideApiKey = overrideApiKey
+                    overrideApiKey = overrideApiKey,
+                    referenceImageUri = _referenceImageUri.value,
+                    referenceMode = _referenceMode.value
                 )
                 
                 _generationState.value = GenerationState.Success(artwork)

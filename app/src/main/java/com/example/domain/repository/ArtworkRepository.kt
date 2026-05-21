@@ -1,8 +1,10 @@
 package com.example.domain.repository
 
+import android.net.Uri
 import com.example.domain.model.AspectRatio
 import com.example.domain.model.GeneratedArtwork
 import com.example.domain.model.ImageQuality
+import com.example.domain.model.ImageReferenceMode
 import com.example.domain.model.ImageStyle
 import kotlinx.coroutines.flow.Flow
 
@@ -31,6 +33,8 @@ interface ArtworkRepository {
         style: ImageStyle,
         aspectRatio: AspectRatio,
         quality: ImageQuality,
-        overrideApiKey: String?
+        overrideApiKey: String?,
+        referenceImageUri: Uri? = null,
+        referenceMode: ImageReferenceMode = ImageReferenceMode.INSPIRE
     ): GeneratedArtwork
 }

@@ -69,3 +69,12 @@ enum class ImageQuality(val displayName: String) {
         fun fromName(name: String): ImageQuality = entries.find { it.name == name } ?: STANDARD
     }
 }
+
+enum class ImageReferenceMode(val displayName: String, val emoji: String, val description: String) {
+    INSPIRE("Inspire", "✨", "Generate new image inspired by style"),
+    EDIT("Edit Image", "✏️", "Transform / edit the uploaded image");
+
+    companion object {
+        fun fromName(name: String): ImageReferenceMode = entries.find { it.name == name } ?: INSPIRE
+    }
+}
