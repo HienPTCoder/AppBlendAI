@@ -1,0 +1,6 @@
+{
+  "name": "AI Blend",
+  "description": "Premium AI image generation application calling Gemini API to blend text prompts into high-quality realistic, anime, cyberpunk, cartoon, and fantasy artworks.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
